@@ -7,12 +7,12 @@
 ARG ROS_VERSION=humble
 ARG UBUNTU_VERSION=jammy
 
-FROM ros:${ROS_VERSION}-ros-base-${UBUNTU_VERSION}
+FROM ros:${ROS_VERSION}-ros-base-${UBUNTU_VERSION} AS base
 
 # Argument to control the type of docker image to build
 ARG IMAGE_TYPE=full  # Default to 'full'
 
-# Arguments for the source repos 
+# Arguments for the source repos
 ARG O3DE_REPO=https://github.com/o3de/o3de.git
 ARG O3DE_BRANCH=2305.1
 
@@ -31,7 +31,7 @@ ENV WORKSPACE=/data/workspace
 WORKDIR $WORKSPACE
 
 # Setup time zone and locale data (necessary for SSL and HTTPS packages)
-RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get -y \
+RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get -y --no-install-recommends \
     install \
     tzdata \
     locales \
@@ -44,7 +44,7 @@ RUN apt-get update && DEBIAN_FRONTEND="noninteractive" apt-get -y \
 ENV LANG=en_US.UTF-8
 
 # Install the required ubuntu packages
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     bc \
     bind9-utils \
     binutils \
@@ -90,7 +90,7 @@ RUN apt-get update && apt-get install -y \
 
 # Setup and install the ROS packages
 RUN sh -c 'echo "deb [arch=amd64,arm64] http://repo.ros2.org/ubuntu/main `lsb_release -cs` main" > /etc/apt/sources.list.d/ros2-latest.list' \
-    && curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | sudo apt-key add - 
+    && curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | apt-key add -
 
 RUN apt-get update && apt-get install -y \
     ros-${ROS_DISTRO}-ackermann-msgs \
@@ -115,9 +115,17 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/* \
     && pip install python-statemachine
 
+FROM base AS roscon_demo_repo
 # Depending on the image type, sync, setup and build only whats needed
-RUN if [ "${IMAGE_TYPE}" = "full" ]; then \
-        git clone --recursive $O3DE_REPO $WORKSPACE/o3de \
+
+RUN git clone $ROSCON_DEMO_REPO \
+        && git -C $WORKSPACE/ROSConDemo checkout $ROSCON_DEMO_BRANCH \
+        && git -C $WORKSPACE/ROSConDemo lfs install \
+        && git -C $WORKSPACE/ROSConDemo lfs pull;
+
+FROM roscon_demo_repo AS source_depends
+
+RUN git clone --recursive $O3DE_REPO $WORKSPACE/o3de \
         && git -C $WORKSPACE/o3de checkout $O3DE_BRANCH \
         && git -C $WORKSPACE/o3de lfs install \
         && git -C $WORKSPACE/o3de lfs pull \
@@ -126,18 +134,25 @@ RUN if [ "${IMAGE_TYPE}" = "full" ]; then \
         && git clone $O3DE_EXTRAS_REPO \
         && git -C $WORKSPACE/o3de-extras checkout $O3DE_EXTRAS_BRANCH \
         && $WORKSPACE/o3de/scripts/o3de.sh register -gp $WORKSPACE/o3de-extras/Gems/ROS2 \
-        && git clone $ROSCON_DEMO_REPO \
-        && git -C $WORKSPACE/ROSConDemo checkout $ROSCON_DEMO_BRANCH \
-        && git -C $WORKSPACE/ROSConDemo lfs install \
-        && git -C $WORKSPACE/ROSConDemo lfs pull \
         && $WORKSPACE/o3de/scripts/o3de.sh register -pp $WORKSPACE/ROSConDemo/Project \
         && . /opt/ros/${ROS_DISTRO}/setup.sh \
         && cd $WORKSPACE/ROSConDemo/Project \
-        && cmake -B $WORKSPACE/ROSConDemo/Project/build/linux -S . -G "Ninja Multi-Config" -DLY_DISABLE_TEST_MODULES=ON -DLY_STRIP_DEBUG_SYMBOLS=ON \
-        && cmake --build $WORKSPACE/ROSConDemo/Project/build/linux --config profile --target ROSConDemo.GameLauncher Editor ROSConDemo.Assets -j $CMAKE_JOBS \
-        && cd $WORKSPACE/ROSConDemo/kraken_nav \
-        && colcon build --symlink-install \
-        && rm -rf ~/.o3de/3rdParty/ \
+        && cmake -B $WORKSPACE/ROSConDemo/Project/build/linux -S . -G "Ninja Multi-Config" -DLY_DISABLE_TEST_MODULES=ON -DLY_STRIP_DEBUG_SYMBOLS=ON
+
+FROM source_depends AS roscon_demo_build
+
+RUN if [ "${IMAGE_TYPE}" = "full" ]; then \
+  cmake --build $WORKSPACE/ROSConDemo/Project/build/linux --config profile --target ROSConDemo.GameLauncher Editor ROSConDemo.Assets -j $CMAKE_JOBS \
+  && cd $WORKSPACE/ROSConDemo/kraken_nav \
+  && colcon build --symlink-install; \
+elif [ "${IMAGE_TYPE}" = "simulation" ]; then \
+  cmake --build $WORKSPACE/ROSConDemo/Project/build/linux --config profile --target ROSConDemo.GameLauncher ROSConDemo.Assets -j $CMAKE_JOBS; \
+else \
+  echo "Unsupported IMAGE_TYPE: ${IMAGE_TYPE}" && exit 1; \
+fi
+
+FROM roscon_demo_build AS cleanup
+RUN rm -rf ~/.o3de/3rdParty/ \
         && rm -rf $WORKSPACE/o3de/.git \
         && rm -rf $WORKSPACE/o3de/AutomatedTesting \
         && rm -rf $WORKSPACE/o3de/python/downloaded_packages \
@@ -150,31 +165,7 @@ RUN if [ "${IMAGE_TYPE}" = "full" ]; then \
         && rm -rf $WORKSPACE/ROSConDemo/build/linux/cmake \
         && rm -rf $WORKSPACE/ROSConDemo/build/linux/lib/ \
         && rm -rf $WORKSPACE/ROSConDemo/build/linux/o3de/ \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/packages/;  \ 
-    elif [ "${IMAGE_TYPE}" = "simulation" ]; then \
-        git clone --recursive $O3DE_REPO $WORKSPACE/o3de \
-        && git -C $WORKSPACE/o3de checkout $O3DE_BRANCH \
-        && git -C $WORKSPACE/o3de lfs install \
-        && git -C $WORKSPACE/o3de lfs pull \
-        && $WORKSPACE/o3de/python/get_python.sh \
-        && $WORKSPACE/o3de/scripts/o3de.sh register -ep $WORKSPACE/o3de \
-        && git clone $O3DE_EXTRAS_REPO \
-        && git -C $WORKSPACE/o3de-extras checkout $O3DE_EXTRAS_BRANCH \
-        && $WORKSPACE/o3de/scripts/o3de.sh register -gp $WORKSPACE/o3de-extras/Gems/ROS2 \
-        && git clone $ROSCON_DEMO_REPO \
-        && git -C $WORKSPACE/ROSConDemo checkout $ROSCON_DEMO_BRANCH \
-        && git -C $WORKSPACE/ROSConDemo lfs install \
-        && git -C $WORKSPACE/ROSConDemo lfs pull \
-        && $WORKSPACE/o3de/scripts/o3de.sh register -pp $WORKSPACE/ROSConDemo/Project \
-        && . /opt/ros/${ROS_DISTRO}/setup.sh \
-        && cd $WORKSPACE/ROSConDemo/Project \
-        && cmake -B $WORKSPACE/ROSConDemo/Project/build/linux -S . -G "Ninja Multi-Config" -DLY_DISABLE_TEST_MODULES=ON -DLY_STRIP_DEBUG_SYMBOLS=ON \
-        && cmake --build $WORKSPACE/ROSConDemo/Project/build/linux --config profile --target ROSConDemo.GameLauncher ROSConDemo.Assets -j $CMAKE_JOBS \
-        && rm -rf $WORKSPACE/o3de-extras/ \
-        && rm -rf ~/.o3de/3rdParty/ \
-        && rm -rf $WORKSPACE/o3de/.git \
-        && rm -rf $WORKSPACE/o3de/AutomatedTesting \
-        && rm -rf $WORKSPACE/o3de/python/downloaded_packages \
+        && rm -rf $WORKSPACE/ROSConDemo/build/linux/packages/;  \
         && rm -rf $WORKSPACE/o3de/Code \
         && rm -rf $WORKSPACE/o3de/Gems \
         && rm -rf $WORKSPACE/ROSConDemo/.git \
@@ -182,16 +173,6 @@ RUN if [ "${IMAGE_TYPE}" = "full" ]; then \
         && rm -rf $WORKSPACE/ROSConDemo/Source \
         && rm -rf $WORKSPACE/ROSConDemo/Levels \
         && rm -rf $WORKSPACE/ROSConDemo/ReflectionProbes \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/Azcg/ \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/CMake \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/CMakeFiles/ \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/External/ \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/Testing/ \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/_deps/ \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/cmake \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/lib/ \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/o3de/ \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/packages/ \ 
         && rm -rf $WORKSPACE/ROSConDemo/build/linux/bin/profile/*.Editor.so \
         && rm -rf $WORKSPACE/ROSConDemo/build/linux/bin/profile/EditorPlugins \
         && rm -rf $WORKSPACE/ROSConDemo/build/linux/bin/profile/Editor \
@@ -199,15 +180,9 @@ RUN if [ "${IMAGE_TYPE}" = "full" ]; then \
         && rm -rf $WORKSPACE/ROSConDemo/build/linux/bin/profile/AssetProcessorBatch \
         && rm -rf $WORKSPACE/ROSConDemo/build/linux/bin/profile/MaterialEditor \
         && rm -rf $WORKSPACE/ROSConDemo/build/linux/bin/profile/AssetBuilder \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/bin/profile/MaterialCanvas; \
-    elif [  "${IMAGE_TYPE}" = "navstack" ]; then \
-        git clone $ROSCON_DEMO_REPO \
-        && git -C $WORKSPACE/ROSConDemo checkout $ROSCON_DEMO_BRANCH \
-        && git -C $WORKSPACE/ROSConDemo lfs install \
-        && git -C $WORKSPACE/ROSConDemo lfs pull; \
-    else \
-        echo "Unsupported IMAGE_TYPE: ${IMAGE_TYPE}" && exit 1; \
-    fi
+        && rm -rf $WORKSPACE/ROSConDemo/build/linux/bin/profile/MaterialCanvas;
+
+FROM cleanup AS navstack
 
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 

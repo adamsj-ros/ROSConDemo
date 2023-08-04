@@ -15,16 +15,31 @@ The dockerfile defined in this path will prepare the appropriate ROS2 Iron distr
 
 The dockerfile supports defining which version of Ubuntu+ROS to base the docker container on, and by default will support Ubuntu 22.04 (jammy) with the ROS2 Humble distribution. The dockerfile will build an O3DE simulation environment that is configured to launch the O3DE editor, O3DE simulation launcher, and the simulation navigation stack used for the simulation.
 
-Run the following command to build the docker image for the ROSConDemo environment using default configuration:
+Run the following command to build the docker image for the ROSConDemo environment using default configuration at a particular stage. For example:
 
 ```
-docker build -t roscon_demo -f Dockerfile .
+docker build --target base -t roscon_demo:base -f Dockerfile .
+```
+where `base` is the target stage and also used as a tag to separate the build for troubleshooting
+
+This will create a `roscon_demo:base` docker image which will used when running the container. It works for the other stages including:
+
+```
+ base
+ roscon_demo_repo
+ source_depends
+ roscon_demo_build
+ cleanup
+ navstack
 ```
 
-This will create a `roscon_demo` docker image which will used when running the container.
+To build all stages, run:
+```
+docker build -t roscon_demo:all -f Dockerfile .
+```
 
 
-**Note** 
+**Note**
 The above command example will build the full simulation environment needed to run the O3DE editor, O3DE simulation launcher, and the simulation navigation stack, based on the latest code from the o3de (O3DE Engine), o3de-extras (ROS2 Gem), and the ROSConDemo. The arguments specified will pull in the last known good version of the dependent projects from their repo. See the Advanced Options section below for more information.
 
 The build process may take over two hours depending on the hardware resource and network connectivity of the machine used to build the image.
@@ -69,7 +84,7 @@ The Docker script defaults to building an image based on Ubuntu 22.04 (jammy) an
 
 ### Custom source repos and branches
 
-The Dockerscripts use the following arguments to determine the repository to pull the source from. 
+The Dockerscripts use the following arguments to determine the repository to pull the source from.
 
 | Argument              | Repository                       | Default                                            |
 |-----------------------|----------------------------------|----------------------------------------------------|
