@@ -152,6 +152,7 @@ else \
 fi
 
 FROM roscon_demo_build AS cleanup
+
 RUN rm -rf ~/.o3de/3rdParty/ \
         && rm -rf $WORKSPACE/o3de/.git \
         && rm -rf $WORKSPACE/o3de/AutomatedTesting \
@@ -165,7 +166,7 @@ RUN rm -rf ~/.o3de/3rdParty/ \
         && rm -rf $WORKSPACE/ROSConDemo/build/linux/cmake \
         && rm -rf $WORKSPACE/ROSConDemo/build/linux/lib/ \
         && rm -rf $WORKSPACE/ROSConDemo/build/linux/o3de/ \
-        && rm -rf $WORKSPACE/ROSConDemo/build/linux/packages/;  \
+        && rm -rf $WORKSPACE/ROSConDemo/build/linux/packages/ \
         && rm -rf $WORKSPACE/o3de/Code \
         && rm -rf $WORKSPACE/o3de/Gems \
         && rm -rf $WORKSPACE/ROSConDemo/.git \
